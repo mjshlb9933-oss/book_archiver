@@ -102,18 +102,24 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _captureImages() async {
     final picker = ImagePicker();
+    _capturedImages.clear();
+    setState(() {});
 
-    while (true) {
+    bool continueCapture = true;
+    while (continueCapture) {
       final XFile? image = await picker.pickImage(
         source: ImageSource.camera,
         imageQuality: 85,
       );
 
-      if (image == null) break;
+      if (image == null) {
+        break;
+      }
 
       setState(() => _capturedImages.add(image));
 
       if (!mounted) return;
+
       final action = await showDialog<String>(
         context: context,
         barrierDismissible: false,
@@ -122,15 +128,15 @@ class _HomeScreenState extends State<HomeScreen> {
           content: const Text('هل تريد تصوير صورة أخرى؟'),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(ctx, 'cancel'),
+              onPressed: () => Navigator.of(ctx).pop('cancel'),
               child: const Text('إلغاء الكل', style: TextStyle(color: Colors.red)),
             ),
             ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, 'more'),
+              onPressed: () => Navigator.of(ctx).pop('more'),
               child: const Text('صورة أخرى'),
             ),
             ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, 'done'),
+              onPressed: () => Navigator.of(ctx).pop('done'),
               style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
               child: const Text('موافق'),
             ),
@@ -138,17 +144,17 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
 
-      if (action == 'more') continue;
-      if (action == 'cancel') {
+      if (action == 'more') {
+        continueCapture = true;
+      } else if (action == 'done') {
+        continueCapture = false;
+        await _processAndSavePdf();
+        return;
+      } else {
         setState(() => _capturedImages.clear());
         _showSnack('تم إلغاء الصور', Colors.orange);
-        break;
+        return;
       }
-      if (action == 'done') {
-        await _processAndSavePdf();
-        break;
-      }
-      break;
     }
   }
 
@@ -159,6 +165,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     setState(() => _loading = true);
+    _showSnack('⏳ جاري معالجة الصور...', Colors.blue);
 
     try {
       final pdf = pw.Document();
@@ -169,10 +176,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
         if (processed == null) continue;
 
-        // تدوير تلقائي إن لزم
         final rotated = img.bakeOrientation(processed);
 
-        // تحسين الوضوح
         final adjusted = img.adjustColor(
           rotated,
           brightness: 1.05,
@@ -180,7 +185,6 @@ class _HomeScreenState extends State<HomeScreen> {
           saturation: 1.0,
         );
 
-        // تحويل إلى JPEG
         final jpg = img.encodeJpg(adjusted, quality: 85);
 
         pdf.addPage(
@@ -198,18 +202,18 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!await dir.exists()) await dir.create(recursive: true);
 
       final fileName =
-          'book_${_editingBookId ?? DateTime.now().millisecondsSinceEpoch}.pdf';
+          'book_${DateTime.now().millisecondsSinceEpoch}.pdf';
       final file = File('${dir.path}/$fileName');
       await file.writeAsBytes(await pdf.save());
 
-      // إضافة الكتاب أو تعديله
-      if (_editingBookId != null) {
-        await _updateBook(_editingBookId!, file.path);
-      } else {
-        await _addBook(file.path);
-      }
+      _showSnack('✅ تم حفظ PDF في Download/Books', Colors.green);
 
-      _showSnack('✅ تم حفظ PDF: ${file.path}', Colors.green);
+      try {
+        await _addBook(file.path);
+        _showSnack('✅ تم رفع الكتاب للسيرفر', Colors.green);
+      } catch (e) {
+        _showSnack('⚠️ PDF محفوظ محلياً لكن فشل الرفع', Colors.orange);
+      }
 
       setState(() {
         _capturedImages.clear();
@@ -219,7 +223,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _dateCtrl.clear();
       });
     } catch (e) {
-      _showSnack('خطأ في المعالجة: $e', Colors.red);
+      _showSnack('❌ خطأ: $e', Colors.red);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
