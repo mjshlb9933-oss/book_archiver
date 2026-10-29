@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -19,7 +17,6 @@ class BookArchiverApp extends StatelessWidget {
       title: 'أرشيف الكتب',
       theme: ThemeData(
         primarySwatch: Colors.teal,
-        brightness: Brightness.light,
         scaffoldBackgroundColor: const Color(0xFFF0F8F7),
         appBarTheme: AppBarTheme(
           backgroundColor: Colors.teal.shade700,
@@ -66,6 +63,9 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
+  // ═══════════════════════════════════════════
+  // جلب الكتب
+  // ═══════════════════════════════════════════
   Future<void> _loadBooks() async {
     setState(() => _loading = true);
     try {
@@ -74,15 +74,18 @@ class _HomeScreenState extends State<HomeScreen> {
           .timeout(const Duration(seconds: 10));
       final data = jsonDecode(utf8.decode(response.bodyBytes));
       if (data['success'] == true) {
-        setState(() => _books = data['books'] ?? []);
+        if (mounted) setState(() => _books = data['books'] ?? []);
       }
     } catch (e) {
-      _showSnack('خطأ: $e', Colors.red);
+      _showSnack('خطأ في التحميل: $e', Colors.red);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
+  // ═══════════════════════════════════════════
+  // بحث
+  // ═══════════════════════════════════════════
   Future<void> _search(String query) async {
     setState(() => _loading = true);
     try {
@@ -91,73 +94,117 @@ class _HomeScreenState extends State<HomeScreen> {
       ).timeout(const Duration(seconds: 10));
       final data = jsonDecode(utf8.decode(response.bodyBytes));
       if (data['success'] == true) {
-        setState(() => _books = data['books'] ?? []);
+        if (mounted) setState(() => _books = data['books'] ?? []);
       }
     } catch (e) {
-      _showSnack('خطأ: $e', Colors.red);
+      _showSnack('خطأ في البحث: $e', Colors.red);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
+  // ═══════════════════════════════════════════
+  // الكاميرا — الطريقة الآمنة
+  // ═══════════════════════════════════════════
   Future<void> _captureImages() async {
-    final picker = ImagePicker();
-    _capturedImages.clear();
-    setState(() {});
-
-    bool continueCapture = true;
-    while (continueCapture) {
-      final XFile? image = await picker.pickImage(
-        source: ImageSource.camera,
-        imageQuality: 85,
-      );
-
-      if (image == null) {
-        break;
-      }
-
-      setState(() => _capturedImages.add(image));
-
-      if (!mounted) return;
-
-      final action = await showDialog<String>(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => AlertDialog(
-          title: Text('📸 الصور: ${_capturedImages.length}'),
-          content: const Text('هل تريد تصوير صورة أخرى؟'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop('cancel'),
-              child: const Text('إلغاء الكل', style: TextStyle(color: Colors.red)),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(ctx).pop('more'),
-              child: const Text('صورة أخرى'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(ctx).pop('done'),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-              child: const Text('موافق'),
-            ),
-          ],
-        ),
-      );
-
-      if (action == 'more') {
-        continueCapture = true;
-      } else if (action == 'done') {
-        continueCapture = false;
-        await _processAndSavePdf();
-        return;
-      } else {
-        setState(() => _capturedImages.clear());
-        _showSnack('تم إلغاء الصور', Colors.orange);
-        return;
-      }
+    // 1. مسح الصور القديمة إذا بدأنا من جديد
+    if (_capturedImages.isEmpty) {
+      // لا شيء
     }
+
+    // 2. فتح الكاميرا
+    final picker = ImagePicker();
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 80,
+      maxWidth: 1600,
+    );
+
+    if (image == null) return;
+    if (!mounted) return;
+
+    // 3. إضافة الصورة
+    setState(() => _capturedImages.add(image));
+
+    // 4. إظهار النافذة
+    if (!mounted) return;
+    _showCaptureDialog();
   }
 
+  void _showCaptureDialog() {
+    showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext ctx) {
+        return PopScope(
+          canPop: false,
+          child: AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.camera_alt, color: Colors.teal),
+                const SizedBox(width: 8),
+                Text('الصور: ${_capturedImages.length}'),
+              ],
+            ),
+            content: const Text('هل تريد تصوير صورة أخرى؟'),
+            actionsPadding: const EdgeInsets.all(12),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(ctx).pop('cancel');
+                },
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                child: const Text('إلغاء الكل', style: TextStyle(fontSize: 15)),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(ctx).pop('more');
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('صورة أخرى'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(ctx).pop('done');
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('موافق'),
+              ),
+            ],
+          ),
+        );
+      },
+    ).then((action) {
+      // هذه الكتلة تُنفذ بعد إغلاق النافذة
+      if (!mounted) return;
+
+      if (action == 'more') {
+        // التقاط صورة أخرى
+        Future.delayed(const Duration(milliseconds: 200), () {
+          if (mounted) _captureImages();
+        });
+      } else if (action == 'done') {
+        // معالجة وحفظ
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) _processAndSavePdf();
+        });
+      } else {
+        // إلغاء
+        setState(() => _capturedImages.clear());
+        _showSnack('تم إلغاء الصور', Colors.orange);
+      }
+    });
+  }
+
+  // ═══════════════════════════════════════════
+  // معالجة الصور وإنشاء PDF
+  // ═══════════════════════════════════════════
   Future<void> _processAndSavePdf() async {
     if (_capturedImages.isEmpty) {
       _showSnack('لا توجد صور', Colors.orange);
@@ -169,59 +216,76 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final pdf = pw.Document();
+      int processedCount = 0;
 
       for (int i = 0; i < _capturedImages.length; i++) {
-        final bytes = await _capturedImages[i].readAsBytes();
-        final processed = img.decodeImage(bytes);
+        try {
+          final bytes = await _capturedImages[i].readAsBytes();
+          final processed = img.decodeImage(bytes);
+          if (processed == null) continue;
 
-        if (processed == null) continue;
+          // تدوير تلقائي
+          final rotated = img.bakeOrientation(processed);
 
-        final rotated = img.bakeOrientation(processed);
+          // تحسين الوضوح
+          final adjusted = img.adjustColor(
+            rotated,
+            brightness: 1.05,
+            contrast: 1.1,
+            saturation: 1.0,
+          );
 
-        final adjusted = img.adjustColor(
-          rotated,
-          brightness: 1.05,
-          contrast: 1.1,
-          saturation: 1.0,
-        );
+          // ضغط
+          final jpg = img.encodeJpg(adjusted, quality: 80);
 
-        final jpg = img.encodeJpg(adjusted, quality: 85);
-
-        pdf.addPage(
-          pw.Page(
-            pageFormat: PdfPageFormat.a4,
-            margin: const pw.EdgeInsets.all(10),
-            build: (pw.Context ctx) => pw.Center(
-              child: pw.Image(pw.MemoryImage(jpg), fit: pw.BoxFit.contain),
+          pdf.addPage(
+            pw.Page(
+              pageFormat: PdfPageFormat.a4,
+              margin: const pw.EdgeInsets.all(10),
+              build: (pw.Context c) => pw.Center(
+                child: pw.Image(pw.MemoryImage(jpg), fit: pw.BoxFit.contain),
+              ),
             ),
-          ),
-        );
+          );
+
+          processedCount++;
+        } catch (e) {
+          debugPrint('خطأ في صورة $i: $e');
+        }
       }
 
+      if (processedCount == 0) {
+        throw Exception('فشلت معالجة جميع الصور');
+      }
+
+      // حفظ محلي
       final dir = Directory('/sdcard/Download/Books');
       if (!await dir.exists()) await dir.create(recursive: true);
 
-      final fileName =
-          'book_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      final fileName = 'book_${DateTime.now().millisecondsSinceEpoch}.pdf';
       final file = File('${dir.path}/$fileName');
       await file.writeAsBytes(await pdf.save());
 
-      _showSnack('✅ تم حفظ PDF في Download/Books', Colors.green);
+      _showSnack('✅ تم حفظ PDF: ${file.path}', Colors.green);
 
+      // محاولة الرفع للسيرفر
       try {
         await _addBook(file.path);
         _showSnack('✅ تم رفع الكتاب للسيرفر', Colors.green);
       } catch (e) {
-        _showSnack('⚠️ PDF محفوظ محلياً لكن فشل الرفع', Colors.orange);
+        _showSnack('⚠️ PDF محفوظ لكن فشل الرفع', Colors.orange);
       }
 
-      setState(() {
-        _capturedImages.clear();
-        _editingBookId = null;
-        _titleCtrl.clear();
-        _publisherCtrl.clear();
-        _dateCtrl.clear();
-      });
+      // تفريغ
+      if (mounted) {
+        setState(() {
+          _capturedImages.clear();
+          _editingBookId = null;
+          _titleCtrl.clear();
+          _publisherCtrl.clear();
+          _dateCtrl.clear();
+        });
+      }
     } catch (e) {
       _showSnack('❌ خطأ: $e', Colors.red);
     } finally {
@@ -244,29 +308,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (data['success'] == true) {
       final bookId = data['book']['id'];
-      // رفع PDF
       await _uploadPdf(bookId, pdfPath);
-      await _loadBooks();
-    } else {
-      throw Exception(data['error']);
-    }
-  }
-
-  Future<void> _updateBook(int id, String pdfPath) async {
-    final response = await http.post(
-      Uri.parse(_apiUrl),
-      body: {
-        'action': 'update',
-        'id': id.toString(),
-        'title': _titleCtrl.text,
-        'publisher': _publisherCtrl.text,
-        'date': _dateCtrl.text,
-      },
-    );
-    final data = jsonDecode(utf8.decode(response.bodyBytes));
-
-    if (data['success'] == true) {
-      await _uploadPdf(id, pdfPath);
       await _loadBooks();
     } else {
       throw Exception(data['error']);
@@ -340,7 +382,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _publisherCtrl.text = book['publisher'] ?? '';
       _dateCtrl.text = book['date'] ?? '';
     });
-    _showSnack('عدّل البيانات ثم اضغط تصوير لحفظ PDF جديد', Colors.blue);
+    _showSnack('عدّل البيانات ثم أضف', Colors.blue);
   }
 
   void _showSnack(String msg, Color color) {
@@ -369,7 +411,6 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // الحقول الثلاثة
               TextField(
                 controller: _titleCtrl,
                 decoration: const InputDecoration(
@@ -398,8 +439,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-
-              // زر تصوير
               ElevatedButton.icon(
                 onPressed: _loading ? null : _captureImages,
                 icon: const Icon(Icons.camera_alt, size: 26),
@@ -414,8 +453,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-
-              // أزرار الإدارة
               Row(
                 children: [
                   Expanded(
@@ -474,8 +511,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
               const SizedBox(height: 16),
-
-              // حقل البحث
               TextField(
                 controller: _searchCtrl,
                 onChanged: _search,
@@ -487,8 +522,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-
-              // الجدول
               if (_loading)
                 const Center(child: CircularProgressIndicator())
               else if (_books.isEmpty)
@@ -533,10 +566,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 icon: const Icon(Icons.picture_as_pdf, color: Colors.red),
                                 tooltip: 'فتح PDF',
                                 onPressed: () {
-                                  _showSnack(
-                                    'PDF على السيرفر: ${book['pdf_path']}',
-                                    Colors.green,
-                                  );
+                                  _showSnack('PDF: ${book['pdf_path']}', Colors.green);
                                 },
                               ),
                             IconButton(
