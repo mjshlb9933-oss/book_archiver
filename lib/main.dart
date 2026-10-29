@@ -4,9 +4,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:open_file/open_file.dart';
 import 'dart:convert';
 import 'dart:io';
-import 'package:open_file/open_file.dart';
 
 void main() => runApp(const BookArchiverApp());
 
@@ -46,6 +46,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<XFile> _capturedImages = [];
   bool _loading = false;
   int? _editingBookId;
+  String? _currentPdfPath;  // مسار PDF الحالي (من الكاميرا)
 
   final String _apiUrl = 'http://192.168.0.101:8080/books_api/api.php';
 
@@ -105,15 +106,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ═══════════════════════════════════════════
-  // الكاميرا — الطريقة الآمنة
+  // الكاميرا
   // ═══════════════════════════════════════════
   Future<void> _captureImages() async {
-    // 1. مسح الصور القديمة إذا بدأنا من جديد
-    if (_capturedImages.isEmpty) {
-      // لا شيء
-    }
-
-    // 2. فتح الكاميرا
     final picker = ImagePicker();
     final XFile? image = await picker.pickImage(
       source: ImageSource.camera,
@@ -124,11 +119,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (image == null) return;
     if (!mounted) return;
 
-    // 3. إضافة الصورة
     setState(() => _capturedImages.add(image));
-
-    // 4. إظهار النافذة
     if (!mounted) return;
+
     _showCaptureDialog();
   }
 
@@ -151,16 +144,12 @@ class _HomeScreenState extends State<HomeScreen> {
             actionsPadding: const EdgeInsets.all(12),
             actions: [
               TextButton(
-                onPressed: () {
-                  Navigator.of(ctx).pop('cancel');
-                },
+                onPressed: () => Navigator.of(ctx).pop('cancel'),
                 style: TextButton.styleFrom(foregroundColor: Colors.red),
-                child: const Text('إلغاء الكل', style: TextStyle(fontSize: 15)),
+                child: const Text('إلغاء الكل'),
               ),
               ElevatedButton(
-                onPressed: () {
-                  Navigator.of(ctx).pop('more');
-                },
+                onPressed: () => Navigator.of(ctx).pop('more'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.orange,
                   foregroundColor: Colors.white,
@@ -168,9 +157,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: const Text('صورة أخرى'),
               ),
               ElevatedButton(
-                onPressed: () {
-                  Navigator.of(ctx).pop('done');
-                },
+                onPressed: () => Navigator.of(ctx).pop('done'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green,
                   foregroundColor: Colors.white,
@@ -182,21 +169,17 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       },
     ).then((action) {
-      // هذه الكتلة تُنفذ بعد إغلاق النافذة
       if (!mounted) return;
 
       if (action == 'more') {
-        // التقاط صورة أخرى
         Future.delayed(const Duration(milliseconds: 200), () {
           if (mounted) _captureImages();
         });
       } else if (action == 'done') {
-        // معالجة وحفظ
         Future.delayed(const Duration(milliseconds: 300), () {
           if (mounted) _processAndSavePdf();
         });
       } else {
-        // إلغاء
         setState(() => _capturedImages.clear());
         _showSnack('تم إلغاء الصور', Colors.orange);
       }
@@ -204,7 +187,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ═══════════════════════════════════════════
-  // معالجة الصور وإنشاء PDF
+  // معالجة الصور — تحفظ PDF محلياً فقط
   // ═══════════════════════════════════════════
   Future<void> _processAndSavePdf() async {
     if (_capturedImages.isEmpty) {
@@ -225,18 +208,13 @@ class _HomeScreenState extends State<HomeScreen> {
           final processed = img.decodeImage(bytes);
           if (processed == null) continue;
 
-          // تدوير تلقائي
           final rotated = img.bakeOrientation(processed);
-
-          // تحسين الوضوح
           final adjusted = img.adjustColor(
             rotated,
             brightness: 1.05,
             contrast: 1.1,
             saturation: 1.0,
           );
-
-          // ضغط
           final jpg = img.encodeJpg(adjusted, quality: 80);
 
           pdf.addPage(
@@ -248,7 +226,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           );
-
           processedCount++;
         } catch (e) {
           debugPrint('خطأ في صورة $i: $e');
@@ -259,7 +236,6 @@ class _HomeScreenState extends State<HomeScreen> {
         throw Exception('فشلت معالجة جميع الصور');
       }
 
-      // حفظ محلي
       final dir = Directory('/sdcard/Download/Books');
       if (!await dir.exists()) await dir.create(recursive: true);
 
@@ -267,26 +243,14 @@ class _HomeScreenState extends State<HomeScreen> {
       final file = File('${dir.path}/$fileName');
       await file.writeAsBytes(await pdf.save());
 
-      _showSnack('✅ تم حفظ PDF: ${file.path}', Colors.green);
-
-      // محاولة الرفع للسيرفر
-      try {
-        await _addBook(file.path);
-        _showSnack('✅ تم رفع الكتاب للسيرفر', Colors.green);
-      } catch (e) {
-        _showSnack('⚠️ PDF محفوظ لكن فشل الرفع', Colors.orange);
-      }
-
-      // تفريغ
+      // حفظ المسار فقط - لا نضيف للسيرفر
       if (mounted) {
         setState(() {
-          _capturedImages.clear();
-          _editingBookId = null;
-          _titleCtrl.clear();
-          _publisherCtrl.clear();
-          _dateCtrl.clear();
+          _currentPdfPath = file.path;
         });
       }
+
+      _showSnack('✅ PDF جاهز — اضغط "إضافة" أو "تعديل" للحفظ', Colors.green);
     } catch (e) {
       _showSnack('❌ خطأ: $e', Colors.red);
     } finally {
@@ -294,25 +258,101 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _addBook(String pdfPath) async {
-    final response = await http.post(
-      Uri.parse(_apiUrl),
-      body: {
-        'action': 'add',
-        'title': _titleCtrl.text,
-        'publisher': _publisherCtrl.text,
-        'date': _dateCtrl.text,
-        'images_count': _capturedImages.length.toString(),
-      },
-    );
-    final data = jsonDecode(utf8.decode(response.bodyBytes));
+  // ═══════════════════════════════════════════
+  // إضافة كتاب (زر "إضافة")
+  // ═══════════════════════════════════════════
+  Future<void> _addNewBook() async {
+    if (_titleCtrl.text.isEmpty ||
+        _publisherCtrl.text.isEmpty ||
+        _dateCtrl.text.isEmpty) {
+      _showSnack('يرجى ملء جميع الحقول', Colors.orange);
+      return;
+    }
 
-    if (data['success'] == true) {
-      final bookId = data['book']['id'];
-      await _uploadPdf(bookId, pdfPath);
-      await _loadBooks();
-    } else {
-      throw Exception(data['error']);
+    if (_currentPdfPath == null) {
+      _showSnack('يرجى التقاط صور أولاً', Colors.orange);
+      return;
+    }
+
+    setState(() => _loading = true);
+
+    try {
+      // إضافة للسيرفر
+      final response = await http.post(
+        Uri.parse(_apiUrl),
+        body: {
+          'action': 'add',
+          'title': _titleCtrl.text,
+          'publisher': _publisherCtrl.text,
+          'date': _dateCtrl.text,
+          'images_count': _capturedImages.length.toString(),
+        },
+      );
+      final data = jsonDecode(utf8.decode(response.bodyBytes));
+
+      if (data['success'] == true) {
+        final bookId = data['book']['id'];
+        await _uploadPdf(bookId, _currentPdfPath!);
+        await _loadBooks();
+        _clearFields();
+        _showSnack('✅ تمت الإضافة بنجاح', Colors.green);
+      } else {
+        throw Exception(data['error']);
+      }
+    } catch (e) {
+      _showSnack('خطأ: $e', Colors.red);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  // ═══════════════════════════════════════════
+  // تعديل كتاب (زر "تعديل")
+  // ═══════════════════════════════════════════
+  Future<void> _updateExistingBook() async {
+    if (_editingBookId == null) {
+      _showSnack('اختر كتاباً من الجدول أولاً', Colors.orange);
+      return;
+    }
+
+    if (_titleCtrl.text.isEmpty ||
+        _publisherCtrl.text.isEmpty ||
+        _dateCtrl.text.isEmpty) {
+      _showSnack('يرجى ملء جميع الحقول', Colors.orange);
+      return;
+    }
+
+    setState(() => _loading = true);
+
+    try {
+      // تعديل في السيرفر
+      final response = await http.post(
+        Uri.parse(_apiUrl),
+        body: {
+          'action': 'update',
+          'id': _editingBookId.toString(),
+          'title': _titleCtrl.text,
+          'publisher': _publisherCtrl.text,
+          'date': _dateCtrl.text,
+        },
+      );
+      final data = jsonDecode(utf8.decode(response.bodyBytes));
+
+      if (data['success'] == true) {
+        // إذا كانت هناك صور جديدة، نرفع PDF الجديد
+        if (_currentPdfPath != null) {
+          await _uploadPdf(_editingBookId!, _currentPdfPath!);
+        }
+        await _loadBooks();
+        _clearFields();
+        _showSnack('✅ تم التعديل بنجاح', Colors.green);
+      } else {
+        throw Exception(data['error']);
+      }
+    } catch (e) {
+      _showSnack('خطأ: $e', Colors.red);
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -328,12 +368,15 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _deleteBook(int id) async {
+  // ═══════════════════════════════════════════
+  // حذف كتاب (مع تأكيد)
+  // ═══════════════════════════════════════════
+  Future<void> _deleteBook(int id, String title) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('تأكيد الحذف'),
-        content: const Text('هل تريد حذف هذا الكتاب نهائياً؟'),
+        content: Text('هل تريد حذف "$title" نهائياً؟'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -365,35 +408,15 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _clearFields() {
-    setState(() {
-      _titleCtrl.clear();
-      _publisherCtrl.clear();
-      _dateCtrl.clear();
-      _capturedImages.clear();
-      _editingBookId = null;
-    });
-    _showSnack('تم تفريغ الحقول', Colors.blue);
-  }
-
-  void _editBook(dynamic book) {
-    setState(() {
-      _editingBookId = book['id'];
-      _titleCtrl.text = book['title'] ?? '';
-      _publisherCtrl.text = book['publisher'] ?? '';
-      _dateCtrl.text = book['date'] ?? '';
-    });
-    _showSnack('عدّل البيانات ثم أضف', Colors.blue);
-  }
-
-
+  // ═══════════════════════════════════════════
+  // فتح PDF
+  // ═══════════════════════════════════════════
   Future<void> _openPdf(String? pdfPath) async {
     if (pdfPath == null || pdfPath.isEmpty) {
       _showSnack('لا يوجد ملف PDF', Colors.orange);
       return;
     }
 
-    // 1. الملف المحلي
     if (pdfPath.startsWith('/')) {
       final file = File(pdfPath);
       if (await file.exists()) {
@@ -405,20 +428,19 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
-    // 2. الملف على السيرفر
     final serverUrl = 'http://192.168.0.101:8080/books_api/$pdfPath';
     try {
       _showSnack('⏳ جاري تحميل PDF...', Colors.blue);
       final response = await http.get(Uri.parse(serverUrl));
-      
+
       if (response.statusCode == 200) {
         final dir = Directory('/sdcard/Download/Books');
         if (!await dir.exists()) await dir.create(recursive: true);
-        
+
         final fileName = 'downloaded_${DateTime.now().millisecondsSinceEpoch}.pdf';
         final file = File('${dir.path}/$fileName');
         await file.writeAsBytes(response.bodyBytes);
-        
+
         final result = await OpenFile.open(file.path);
         if (result.type == ResultType.done) {
           _showSnack('✅ تم فتح PDF', Colors.green);
@@ -431,6 +453,29 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       _showSnack('خطأ: $e', Colors.red);
     }
+  }
+
+  void _clearFields() {
+    setState(() {
+      _titleCtrl.clear();
+      _publisherCtrl.clear();
+      _dateCtrl.clear();
+      _capturedImages.clear();
+      _currentPdfPath = null;
+      _editingBookId = null;
+    });
+  }
+
+  void _editBook(dynamic book) {
+    setState(() {
+      _editingBookId = book['id'];
+      _titleCtrl.text = book['title'] ?? '';
+      _publisherCtrl.text = book['publisher'] ?? '';
+      _dateCtrl.text = book['date'] ?? '';
+      _capturedImages.clear();
+      _currentPdfPath = null;
+    });
+    _showSnack('عدّل البيانات ثم اضغط "تعديل"', Colors.blue);
   }
 
   void _showSnack(String msg, Color color) {
@@ -446,7 +491,9 @@ class _HomeScreenState extends State<HomeScreen> {
       textDirection: TextDirection.rtl,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('📚 أرشيف الكتب'),
+          title: Text(_editingBookId != null
+              ? '✏️ تعديل كتاب #$_editingBookId'
+              : '📚 أرشيف الكتب'),
           actions: [
             IconButton(
               icon: const Icon(Icons.refresh),
@@ -500,31 +547,54 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
               ),
+              if (_currentPdfPath != null) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade50,
+                    border: Border.all(color: Colors.green),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.check_circle, color: Colors.green),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'PDF جاهز للحفظ',
+                          style: TextStyle(color: Colors.green.shade800),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               Row(
                 children: [
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: _capturedImages.isNotEmpty
-                          ? _processAndSavePdf
-                          : () => _showSnack('التقط صوراً أولاً', Colors.orange),
+                      onPressed: _loading ? null : _addNewBook,
                       icon: const Icon(Icons.add),
                       label: const Text('إضافة'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.green,
                         foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: () => _showSnack('اختر كتاباً من الجدول للتعديل', Colors.blue),
+                      onPressed: _loading ? null : _updateExistingBook,
                       icon: const Icon(Icons.edit),
                       label: const Text('تعديل'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.blue,
                         foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
                     ),
                   ),
@@ -535,12 +605,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: () => _showSnack('اختر كتاباً من الجدول للحذف', Colors.blue),
+                      onPressed: _editingBookId != null
+                          ? () => _deleteBook(_editingBookId!, _titleCtrl.text)
+                          : () => _showSnack('اختر كتاباً من الجدول للحذف', Colors.orange),
                       icon: const Icon(Icons.delete),
                       label: const Text('حذف'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.red,
                         foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
                     ),
                   ),
@@ -553,6 +626,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.grey,
                         foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
                     ),
                   ),
@@ -620,7 +694,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             IconButton(
                               icon: const Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => _deleteBook(book['id']),
+                              onPressed: () => _deleteBook(book['id'], book['title'] ?? ''),
                             ),
                           ],
                         ),
