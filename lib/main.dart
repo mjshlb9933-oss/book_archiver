@@ -6,6 +6,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'dart:convert';
 import 'dart:io';
+import 'package:open_file/open_file.dart';
 
 void main() => runApp(const BookArchiverApp());
 
@@ -385,6 +386,53 @@ class _HomeScreenState extends State<HomeScreen> {
     _showSnack('عدّل البيانات ثم أضف', Colors.blue);
   }
 
+
+  Future<void> _openPdf(String? pdfPath) async {
+    if (pdfPath == null || pdfPath.isEmpty) {
+      _showSnack('لا يوجد ملف PDF', Colors.orange);
+      return;
+    }
+
+    // 1. الملف المحلي
+    if (pdfPath.startsWith('/')) {
+      final file = File(pdfPath);
+      if (await file.exists()) {
+        final result = await OpenFile.open(pdfPath);
+        if (result.type != ResultType.done) {
+          _showSnack('لا يمكن فتح الملف: ${result.message}', Colors.red);
+        }
+        return;
+      }
+    }
+
+    // 2. الملف على السيرفر
+    final serverUrl = 'http://192.168.0.101:8080/books_api/$pdfPath';
+    try {
+      _showSnack('⏳ جاري تحميل PDF...', Colors.blue);
+      final response = await http.get(Uri.parse(serverUrl));
+      
+      if (response.statusCode == 200) {
+        final dir = Directory('/sdcard/Download/Books');
+        if (!await dir.exists()) await dir.create(recursive: true);
+        
+        final fileName = 'downloaded_${DateTime.now().millisecondsSinceEpoch}.pdf';
+        final file = File('${dir.path}/$fileName');
+        await file.writeAsBytes(response.bodyBytes);
+        
+        final result = await OpenFile.open(file.path);
+        if (result.type == ResultType.done) {
+          _showSnack('✅ تم فتح PDF', Colors.green);
+        } else {
+          _showSnack('لا يمكن فتح الملف: ${result.message}', Colors.red);
+        }
+      } else {
+        _showSnack('فشل تحميل PDF: ${response.statusCode}', Colors.red);
+      }
+    } catch (e) {
+      _showSnack('خطأ: $e', Colors.red);
+    }
+  }
+
   void _showSnack(String msg, Color color) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -561,14 +609,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            if (book['pdf_path'] != null)
-                              IconButton(
-                                icon: const Icon(Icons.picture_as_pdf, color: Colors.red),
-                                tooltip: 'فتح PDF',
-                                onPressed: () {
-                                  _showSnack('PDF: ${book['pdf_path']}', Colors.green);
-                                },
-                              ),
+                            IconButton(
+                              icon: const Icon(Icons.picture_as_pdf, color: Colors.red),
+                              tooltip: 'فتح PDF',
+                              onPressed: () => _openPdf(book['pdf_path']),
+                            ),
                             IconButton(
                               icon: const Icon(Icons.edit, color: Colors.blue),
                               onPressed: () => _editBook(book),
