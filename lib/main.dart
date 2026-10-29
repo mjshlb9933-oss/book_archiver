@@ -112,8 +112,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final picker = ImagePicker();
     final XFile? image = await picker.pickImage(
       source: ImageSource.camera,
-      imageQuality: 80,
-      maxWidth: 1600,
+      imageQuality: 70,
+      maxWidth: 1200,
     );
 
     if (image == null) return;
@@ -205,22 +205,29 @@ class _HomeScreenState extends State<HomeScreen> {
       for (int i = 0; i < _capturedImages.length; i++) {
         try {
           final bytes = await _capturedImages[i].readAsBytes();
-          final processed = img.decodeImage(bytes);
+          var processed = img.decodeImage(bytes);
           if (processed == null) continue;
+
+          if (processed.width > 1200) {
+            processed = img.copyResize(
+              processed,
+              width: 1200,
+              interpolation: img.Interpolation.average,
+            );
+          }
 
           final rotated = img.bakeOrientation(processed);
           final adjusted = img.adjustColor(
             rotated,
             brightness: 1.05,
-            contrast: 1.1,
-            saturation: 1.0,
+            contrast: 1.05,
           );
-          final jpg = img.encodeJpg(adjusted, quality: 80);
+          final jpg = img.encodeJpg(adjusted, quality: 70);
 
           pdf.addPage(
             pw.Page(
               pageFormat: PdfPageFormat.a4,
-              margin: const pw.EdgeInsets.all(10),
+              margin: const pw.EdgeInsets.all(8),
               build: (pw.Context c) => pw.Center(
                 child: pw.Image(pw.MemoryImage(jpg), fit: pw.BoxFit.contain),
               ),
@@ -243,7 +250,6 @@ class _HomeScreenState extends State<HomeScreen> {
       final file = File('${dir.path}/$fileName');
       await file.writeAsBytes(await pdf.save());
 
-      // حفظ المسار فقط - لا نضيف للسيرفر
       if (mounted) {
         setState(() {
           _currentPdfPath = file.path;
@@ -325,7 +331,17 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _loading = true);
 
     try {
-      // تعديل في السيرفر
+      dynamic currentBook;
+      try {
+        currentBook = _books.firstWhere((b) => b['id'] == _editingBookId);
+      } catch (_) {
+        currentBook = null;
+      }
+      final oldCount = currentBook?['images_count'] ?? 0;
+      final newCount = _capturedImages.isNotEmpty
+          ? _capturedImages.length
+          : oldCount;
+
       final response = await http.post(
         Uri.parse(_apiUrl),
         body: {
@@ -334,12 +350,12 @@ class _HomeScreenState extends State<HomeScreen> {
           'title': _titleCtrl.text,
           'publisher': _publisherCtrl.text,
           'date': _dateCtrl.text,
+          'images_count': newCount.toString(),
         },
       );
       final data = jsonDecode(utf8.decode(response.bodyBytes));
 
       if (data['success'] == true) {
-        // إذا كانت هناك صور جديدة، نرفع PDF الجديد
         if (_currentPdfPath != null) {
           await _uploadPdf(_editingBookId!, _currentPdfPath!);
         }
